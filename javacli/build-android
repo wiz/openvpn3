@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# generate expire time in python: time.mktime((2012, 5, 1, 0, 0, 0, 0, 0, -1))
+#    -DAPP_EXPIRE_TIME=1364796000 \
+set -e
+
+if [ -z "$O3" ]; then
+    echo O3 var must point to ovpn3 tree
+    exit 1
+fi
+
+cd $O3
+. android-sdk-path
+cd javacli
+git clean -q -fX .
+git clean -q -fd .
+
+if [ "$PKG" ]; then
+    pkg=$PKG
+    pkg_id_def="-DOPENVPN_PACKAGE_ID=${PKG//./_}"
+else
+    pkg=net.openvpn.openvpn
+    pkg_id_def="-DOPENVPN_PACKAGE_ID=net_openvpn_openvpn"
+fi
+echo PACKAGE $PKG
+
+echo SWIG
+swig -c++ -java -package $pkg -I$O3/client -I$O3 ovpncli.i
+
+for TARGET in android android-a7a ; do
+
+if [ "$DEBUG_BUILD" = "1" ]; then
+    . ../vars-${TARGET}-dbg
+    vis1=""
+    vis2=""
+    opt2="$pkg_id_def $LIB_OPT_LEVEL"
+    DBG_DIR_SUFFIX="-dbg"
+else
+    . ../vars-${TARGET}
+    vis1="-fvisibility=hidden"
+    vis2='-DSWIGEXPORT=__attribute__((visibility("default")))'
+    opt2="$pkg_id_def -Os"
+    DBG_DIR_SUFFIX=""
+fi
+
+if [ "$OPENSSL" = "1" ]; then
+    ssl_def="-DUSE_OPENSSL"
+    ssl_inc="-I$DEP_DIR/openssl/openssl-$PLATFORM/include"
+    ssl_lib="-lssl -lcrypto"
+    ssl_libdir="-L$DEP_DIR/openssl/openssl-$PLATFORM/lib"
+else
+    ssl_def="-DUSE_POLARSSL"
+    ssl_inc="-I$DEP_DIR/polarssl/polarssl-$PLATFORM$DBG_DIR_SUFFIX/include"
+    ssl_lib="-lpolarssl -lminicrypto"
+    ssl_libdir="-L$DEP_DIR/polarssl/polarssl-$PLATFORM$DBG_DIR_SUFFIX/library"
+fi
+
+echo CORE $ABI
+g++ \
+    $PLATFORM_FLAGS \
+    $LIB_OPT_LEVEL $LIB_FPIC \
+    -Wall -Wno-sign-compare -Wno-unused-parameter \
+    -Wno-unused-local-typedefs \
+    $vis1 \
+    $ssl_def \
+    -DHAVE_SNAPPY \
+    -DHAVE_LZ4 \
+    -I$O3/client \
+    -I$O3 \
+    -I$DEP_DIR/boost \
+    $ssl_inc \
+    -I$DEP_DIR/snappy/snappy-$PLATFORM$DBG_DIR_SUFFIX/include \
+    -I$DEP_DIR/lz4/lz4-$PLATFORM$DBG_DIR_SUFFIX/include \
+    -c $O3/client/ovpncli.cpp
+
+echo WRAP $ABI
+g++ \
+    $PLATFORM_FLAGS \
+    $opt2 $LIB_FPIC \
+    -fno-strict-aliasing \
+    -Wall \
+    $vis1 $vis2 \
+    -I$O3/client \
+    -I$O3 \
+    -L$DEP_DIR/boost/stage-$PLATFORM$DBG_DIR_SUFFIX/lib \
+    $ssl_libdir \
+    -L$DEP_DIR/minicrypto/minicrypto-$PLATFORM \
+    -L$DEP_DIR/snappy/snappy-$PLATFORM$DBG_DIR_SUFFIX/lib \
+    -L$DEP_DIR/lz4/lz4-$PLATFORM$DBG_DIR_SUFFIX/lib \
+    ovpncli_wrap.cxx \
+    android/jellybean_hack.cpp \
+    android/cpu.cpp \
+    ovpncli.o \
+    -o libovpncli.so \
+    -shared -Wl,-soname,libovpncli.so \
+    $ssl_lib \
+    -lboost_system -lboost_thread \
+    -lsnappy \
+    -llz4 \
+    -llog
+
+if [ "$DEBUG_BUILD" != "1" ]; then
+    echo STRIP $ABI
+    strip libovpncli.so
+fi
+
+mkdir -p build/libs/$ABI
+mv libovpncli.so build/libs/$ABI/
+rm ovpncli.o
+done
+
+mv ovpncli.java ovpncliJNI.java SWIGTYPE_*.java ClientAPI_*.java build/
+git clean -q -fX .
+git clean -q -f .

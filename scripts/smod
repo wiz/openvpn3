@@ -1,0 +1,329 @@
+#!/usr/bin/python
+
+import os, sys, re
+from optparse import OptionParser
+
+re_binary = re.compile(r"[^\r\n\t\x20-\xFF]")
+
+def joinlines(seq):
+    return ''.join([x+'\n' for x in seq])
+
+def filter_dirnames(dirnames):
+    if '.svn' in dirnames:
+        dirnames.remove('.svn')
+    if '.git' in dirnames:
+        dirnames.remove('.git')
+
+def files(dir, extset=None):
+    ret = []
+    for dirpath, dirnames, filenames in os.walk(dir):
+        filter_dirnames(dirnames)
+        for f in filenames:
+            path = os.path.join(dirpath, f)
+            base, ext = os.path.splitext(f)
+            if extset is None or (len(ext) >= 2 and ext[0] == '.' and ext[1:] in extset):
+                ret.append(path)
+    return ret
+
+def replace_path(opts):
+    r = compile_re(opts)
+    dir = get_dir(opts)
+    extset = get_exts(opts)
+    for dirpath, dirnames, filenames in os.walk(dir):
+        filter_dirnames(dirnames)
+        for f in filenames:
+            path = os.path.join(dirpath, f)
+            base, ext = os.path.splitext(f)
+            if extset is None or (len(ext) >= 2 and ext[0] == '.' and ext[1:] in extset):
+                newf = re.sub(r, opts.to_txt, f)
+                if newf != f:
+                    newpath = os.path.join(dirpath, newf)
+                    if opts.dry_run:
+                        print "WOULD RENAME %r -> %r" % (path, newpath)
+                    else:
+                        print "RENAME %r -> %r" % (path, newpath)
+                        os.rename(path, newpath)
+
+def read_file_splitlines(fn):
+    content = read_file(fn)
+    if content is not None:
+        return content.splitlines()
+
+def read_file(fn):
+    try:
+        with open(fn) as f:
+            content = f.read()
+    except:
+        return None
+    m = re.search(re_binary, content)
+    if m:
+        return None
+    return content;
+
+def write_file(fn, lines):    
+    with open(fn, 'w') as f:
+        f.write(joinlines(lines))
+
+def get_dir(opts):
+    dir = opts.dir
+    if not dir:
+        dir = '.'
+    return dir
+
+def get_exts(opts):
+    extset = set()
+    if opts.cpp:
+        extset |= frozenset(('cpp', 'hpp', 'ipp'))
+    if opts.java:
+        extset |= frozenset(('java',))
+    if opts.python:
+        extset |= frozenset(('py',))
+    if opts.objc:
+        extset |= frozenset(('m', 'mm', 'h'))
+    if opts.msdrv:
+        extset |= frozenset(('inf', 'rc'))
+    if not extset:
+        extset = None
+    return extset
+
+def get_files(opts):
+    if opts.file:
+        return [opts.file]
+    else:
+        extset = get_exts(opts)
+        dir = get_dir(opts)
+        return files(dir, extset)
+
+def build_re(opts):
+    flags = 0;
+    if opts.case_insensitive:
+        flags |= re.I
+    if opts.regex:
+        return (opts.from_txt, flags)
+    else:
+        return (re.escape(opts.from_txt), flags)
+
+def compile_re(opts):
+    rstr, flags = build_re(opts)
+    return re.compile(rstr, flags)
+
+def search_replace(opts):
+    r = compile_re(opts)
+    for f in get_files(opts):
+        named = False
+        old = read_file_splitlines(f)
+        if old is not None:
+            new = []
+            for line in old:
+                newline = re.sub(r, opts.to_txt, line)
+                if line != newline:
+                    if not named:
+                        print '***', f
+                        named = True
+                    print "  FROM", line
+                    print "    TO", newline
+                new.append(newline)
+            if old != new:
+                if opts.dry_run:
+                    print "would modify", f
+                else:
+                    print "modifying", f
+                    write_file(f, new)
+
+def grep(opts):
+    r = compile_re(opts)
+    for fn in get_files(opts):
+        if opts.expand_path:
+            fn = os.path.realpath(fn)
+        content = read_file_splitlines(fn)
+        if content is not None:
+            for line in content:
+                if re.search(r, line):
+                    print "%s : %s" % (fn, line)
+
+def tailset(opts):
+    rstr, flags = build_re(opts)
+    r = re.compile(rstr+r"(\w+)", flags)
+    symdict = {}
+    for fn in get_files(opts):
+        if opts.expand_path:
+            fn = os.path.realpath(fn)
+        content = read_file_splitlines(fn)
+        if content is not None:
+            for line in content:
+                m = re.findall(r, line)
+                for s in frozenset(m):
+                    symdict.setdefault(s, []).append("%s : %s" % (fn, line))
+    for s in sorted(symdict.keys()):
+        print s
+        if opts.verbose:
+            v = symdict[s]
+            for l in v:
+                print ' ', l
+
+def extract_symbols(opts):
+    syms = set()
+    r = compile_re(opts)
+    for fn in get_files(opts):
+        if opts.expand_path:
+            fn = os.path.realpath(fn)
+        content = read_file(fn)
+        if content is not None:
+            res = sorted(frozenset(re.findall(r, content)))
+            for sym in res:
+                print sym
+
+def rm_auto(opts):
+    r = re.compile(r"this file was automatically generated by swig", re.I)
+    remove_if_match(opts, r)
+
+def rm_if_match(opts):
+    r = compile_re(opts)
+    remove_if_match(opts, r)
+
+def remove_if_match(opts, r):
+    for fn in get_files(opts):
+        content = read_file_splitlines(fn)
+        if content is not None:
+            auto = False
+            for line in content:
+                if re.search(r, line):
+                    auto = True
+                    break
+            if auto:
+                if opts.dry_run:
+                    print "would remove", fn
+                else:
+                    print "removing", fn
+                    os.remove(fn)
+
+def utf16_to_8(opts):
+    for fn in get_files(opts):
+        f = None
+        content = None
+        try:
+            f = open(fn, 'rb')
+            head = f.read(2)
+            if len(head) >= 2 and ((ord(head[0]) == 255 and ord(head[1]) == 254) or (ord(head[0]) == 254 and ord(head[1]) == 255)):
+                f = codecs.open(fn, 'rb', 'utf-16')
+                content = f.read()
+        except IOError:
+            continue
+        finally:
+            if f is not None:
+                f.close()
+
+        if content is not None:
+            if opts.dry_run:
+                print "would convert", fn
+            else:
+                print "converting", fn
+                with open(fn, "wb") as f:
+                    f.write(content.encode("utf-8"))
+
+def include_once(opts):
+    def ifndef_name(fn):
+        pl = fn.split(os.sep)
+        if len(pl) >= 3 and pl[:2] == ['.', 'openvpn']:
+            f = os.path.splitext(pl[-1])[0]
+            return "%s_%s_H" % ('_'.join([t.upper() for t in pl[1:-1]]), f.upper())
+
+    r = re.compile(r"^#(ifndef|define|endif\s+//)\s+(?:OPENVPN_\w+_H)")
+    for f in get_files(opts):
+        named = False
+        ifn = ifndef_name(f)
+        if ifn:
+            to = r"#\1 %s" % (ifn,)
+            old = read_file_splitlines(f)
+            if old is not None:
+                new = []
+                for line in old:
+                    newline = re.sub(r, to, line)
+                    if line != newline:
+                        if not named:
+                            print '***', f
+                            named = True
+                        print "  FROM", line
+                        print "    TO", newline
+                    new.append(newline)
+                if old != new:
+                    if opts.dry_run:
+                        print "would modify", f
+                    else:
+                        print "modifying", f
+                        write_file(f, new)
+
+def find(opts):
+    for f in get_files(opts):
+        print f
+
+def main():
+    usage = "usage: smod [options] find|grep|replace|replace-path|include-once|rm-auto|rm-if-match|extract-symbols|tailset|utf16-to-8"
+    parser = OptionParser(usage)
+
+    parser.add_option("", "--cpp", action="store_true", dest="cpp",
+                      help="Match on .cpp, .hpp, and .ipp files")
+    parser.add_option("", "--java", action="store_true", dest="java",
+                      help="Match on .java files")
+    parser.add_option("", "--python", action="store_true", dest="python",
+                      help="Match on .python files")
+    parser.add_option("", "--objc", action="store_true", dest="objc",
+                      help="Match on objective-c files")
+    parser.add_option("", "--msdrv", action="store_true", dest="msdrv",
+                      help="Match on MS driver control files (.inf, .rc)")
+    parser.add_option("-f", "--from", dest="from_txt",
+                      help="from text for replace, or search string for grep or tailset")
+    parser.add_option("-t", "--to", dest="to_txt",
+                      help="to text for replace")
+    parser.add_option("-r", "--regex", action="store_true", dest="regex",
+                      help="--from is a regex and --to may contain regex match substitutions")
+    parser.add_option("-p", "--expand-path", action="store_true", dest="expand_path",
+                      help="expand grep paths")
+    parser.add_option("-i", "--case-insensitive", action="store_true", dest="case_insensitive",
+                      help="grep/replace matches are case insensitive")
+    parser.add_option("-d", "--dry-run", action="store_true", dest="dry_run",
+                      help="don't modify any files")
+    parser.add_option("-D", "--dir", dest="dir",
+                      help="directory to search")
+    parser.add_option("-F", "--file", dest="file",
+                      help="specific file to process")
+    parser.add_option("-v", "--verbose", action="store_true", dest="verbose",
+                      help="generate more output")
+
+    # Get command line arguments...
+    ( opts, args ) = parser.parse_args()
+
+    if len(args) >= 1:
+        if args[0] == 'replace':
+            search_replace(opts)
+        elif args[0] == 'replace-path':
+            replace_path(opts)
+        elif args[0] == 'find':
+            find(opts)
+        elif args[0] == 'include-once':
+            include_once(opts)
+        elif args[0] == 'grep':
+            grep(opts)
+        elif args[0] == 'rm-auto':
+            rm_auto(opts)
+        elif args[0] == 'rm-if-match':
+            rm_if_match(opts)
+        elif args[0] == 'extract-symbols':
+            extract_symbols(opts)
+        elif args[0] == 'tailset':
+            tailset(opts)
+        elif args[0] == 'utf16-to-8':
+            utf16_to_8(opts)
+        else:
+            print "unknown command: %r" % (args[0],)
+            sys.exit(2)
+    else:
+        print "no work"
+        sys.exit(2)
+
+# windows encoding workaround
+if sys.platform == 'win32':
+    import codecs
+    codecs.register(lambda name: codecs.lookup('utf-8') if name == 'cp65001' else None)
+
+main()
