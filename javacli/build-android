@@ -87,8 +87,6 @@ g++ \
     -L$DEP_DIR/snappy/snappy-$PLATFORM$DBG_DIR_SUFFIX/lib \
     -L$DEP_DIR/lz4/lz4-$PLATFORM$DBG_DIR_SUFFIX/lib \
     ovpncli_wrap.cxx \
-    android/jellybean_hack.cpp \
-    android/cpu.cpp \
     ovpncli.o \
     -o libovpncli.so \
     -shared -Wl,-soname,libovpncli.so \

@@ -8,6 +8,74 @@ of an OpenVPN client, and is protocol-compatible with the OpenVPN
 OpenVPN includes a small client wrapper (cli) that links in with
 the library and provides minimal command line functionality.
 
+===================================================================
+===================================================================
+===================================================================
+Building OpenVPN 3 for Android (added by jmaurice)
+
+# create new VM
+install ubuntu-12.04.5-server-i386.iso
+
+# install OS deps
+
+rm -rf /var/lib/apt/lists/*
+vi /etc/apt/sources.list - uncomment partner and extras
+apt-get update
+apt-get upgrade
+apt-get install openjdk-7-jdk gcc g++ cmake binutils zsh vim git unzip zip rar unrar make autoconf automake libtool swig
+
+# download android deps
+
+mkdir ~/src/android/
+
+download deps into ~/src/android/
+  android-sdk_r24.3.4-linux.tgz into ~/src/android
+  android-ndk-r10e-linux-x86.bin into ~/src/android
+
+download into ~/Downloads
+  boost_1_55_0.tar.gz
+  lz4-r112.tar.gz
+  lzo.tar.gz
+  openssl-1.0.1p.tar.gz
+  polarssl-1.3.6-gpl.tgz
+  snappy-1.1.1.tar.gz
+
+# extract android deps
+
+extract android-sdk_r24.3.4-linux.tgz into ~/src/android
+extract android-ndk-r10e-linux-x86.bin into ~/src/android
+
+# install android deps
+
+$HOME/src/android/android-sdk-linux/tools/android update sdk --no-ui --all
+
+# build prep
+clone openvpn3 repo
+export O3=$HOME/openvpn3
+export DEP_DIR=$HOME/src/android
+
+# build toolchain & deps
+
+scripts/android/build-toolchain
+scripts/android/build-all
+
+# build libovpn.so
+
+cd javacli
+cp /usr/lib/jvm/java-7-openjdk-i386/include/jni.h ~/src/android/tc/sysroot/usr/include/
+cp /usr/lib/jvm/java-7-openjdk-i386/include/jni_md.h ~/src/android/tc/sysroot/usr/include/
+cp /usr/lib/jvm/java-7-openjdk-i386/include/jawt_md.h ~/src/android/tc/sysroot/usr/include/
+./build-android
+
+# save build output
+
+-rwxr-xr-x 1 jmaurice jmaurice 1.1M Oct 25 00:41 build/libs/armeabi-v7a/libovpncli.so
+-rwxr-xr-x 1 jmaurice jmaurice 1.4M Oct 25 00:40 build/libs/armeabi/libovpncli.so
+
+===================================================================
+===================================================================
+===================================================================
+
 Building OpenVPN 3 on Mac OS X
 ------------------------------
 
